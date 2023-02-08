@@ -64,6 +64,7 @@
 
    [iri/DbBlockV nat-int?]
    [iri/DbBlockT nat-int?]
+   [iri/DbBlockTxAddress :string]
    [iri/DbBlockSize nat-int?]
    [iri/DbBlockPrevious {:optional true} :string]
 
@@ -78,7 +79,7 @@
    [iri/type [:enum iri/DbBlockSummary]]
 
    [iri/DbBlockAddress :string]
-
+   [iri/DbBlockTxAddress :string]
    [iri/DbBlockV nat-int?]
    [iri/DbBlockT nat-int?]
    [iri/DbBlockSize nat-int?]

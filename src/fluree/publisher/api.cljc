@@ -31,8 +31,8 @@
 (defn publish
   "Creates a ledger entry and stores it in store under its id. Returns a ledger document
   with links to the head db and the head commit."
-  [publisher ledger-path {:keys [tx-summary db-summary] :as summary}]
-  (pub-impl/publish publisher ledger-path summary))
+  [publisher ledger-path db-summary]
+  (pub-impl/publish publisher ledger-path db-summary))
 
 (defn resolve
   "Fetch the latest"

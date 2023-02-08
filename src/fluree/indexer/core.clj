@@ -48,7 +48,7 @@
 
 (defn stage-db
   "Index the given data, then store a db-block"
-  [{:keys [store state] :as idxr} db-address data {:keys [tx-id] :as _opts}]
+  [{:keys [store state] :as idxr} db-address data {:keys [tx-address] :as _opts}]
   (if-let [db-before (get @state db-address)]
     (let [{ledger-name :address/ledger-name} (ident/address-parts db-address)
 
@@ -79,7 +79,7 @@
                      db-after)
 
           ;; create db-block and write it to store
-          db-block      (block/create-db-block db-after assert retract tx-id)
+          db-block      (block/create-db-block db-after assert retract tx-address)
           db-block-path (:path (<?? (store/write store (block/db-block-path ledger-name) db-block
                                                  {:content-address? true})))
 
@@ -150,7 +150,7 @@
           {root        iri/DbBlockIndexRoot
            previous    iri/DbBlockPrevious
            t           iri/DbBlockT
-           tx-id       iri/DbBlockTxId
+           tx-address  iri/DbBlockTxAddress
            reindex-min iri/DbBlockReindexMin
            reindex-max iri/DbBlockReindexMax} db-block
 
@@ -172,7 +172,7 @@
           rebuilt-db-block (block/create-db-block loaded-db
                                                   (get db-block iri/DbBlockAssert)
                                                   (get db-block iri/DbBlockRetract)
-                                                  tx-id)]
+                                                  tx-address)]
       ;; fully loaded
       (swap! state assoc db-address loaded-db)
       (block/create-db-summary rebuilt-db-block db-address))))

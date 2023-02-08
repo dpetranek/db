@@ -14,15 +14,11 @@
   (store/address store "ledger" (ledger-path ledger-name)))
 
 (defn create-ledger-entry
-  [prev-ledger tx-summary db-summary]
-  (let [{prev-head iri/LedgerHead} prev-ledger
-
-        {prev-commit iri/LedgerTxHead
-         prev-db     iri/LedgerDbHead} prev-head]
+  [prev-ledger db-summary]
+  (let [prev-db (-> prev-ledger (get iri/LedgerHead) (get iri/LedgerDbHead))]
     {iri/type               iri/LedgerEntry
      iri/LedgerEntryCreated (util/current-time-iso)
-     iri/LedgerTxHead  (or tx-summary prev-commit)
-     iri/LedgerDbHead  (or db-summary prev-db)}))
+     iri/LedgerDbHead       (or db-summary prev-db)}))
 
 (defn create-ledger
   [store ledger-name {:keys [context tx-address db-address] :as opts}]
@@ -34,8 +30,8 @@
      iri/LedgerV 0
      iri/LedgerContext context
      iri/LedgerHead (create-ledger-entry nil
-                                         {iri/TxHeadAddress tx-address}
-                                         {iri/DbBlockAddress db-address})}))
+                                         {iri/DbBlockAddress db-address
+                                          iri/DbBlockTxAddress tx-address})}))
 
 (defn create-ledger-id
   "Create a stable ledger-id"

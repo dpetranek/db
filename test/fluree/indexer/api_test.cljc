@@ -21,17 +21,17 @@
                                           {"@context" {"me" "http://dan.com/"}
                                            "@id"      "me:dan"
                                            "me:prop1" "bar"}
-                                          {:tx-id "TX-ID1"})
+                                          {:tx-address "TX-ADDRESS1"})
         db2-summary           (idxr/stage idxr (get db1-summary iri/DbBlockAddress)
                                           {"@context" {"me" "http://dan.com/"}
                                            "@id"      "me:dan"
                                            "me:prop2" "foo"}
-                                          {:tx-id "TX-ID2"})
+                                          {:tx-address "TX-ADDRESS2"})
         sibling-stage-summary (idxr/stage idxr db0-address
                                           {"@context" {"me" "http://dan.com/"}
                                            "@id"      "me:dan"
                                            "me:prop1" "DIFFERENT BRANCH"}
-                                          {:tx-id "TX-IDOTHER"})
+                                          {:tx-address "TX-ADDRESSOTHER"})
         db0-results           (idxr/query idxr db0-address {:select ["?s" "?p" "?o"] :where [["?s" "?p" "?o"]]})
         db1-results           (idxr/query idxr (get db1-summary iri/DbBlockAddress)
                                           {:select {"?s" [:*]} :where [["?s" "@id" "http://dan.com/dan"]]})
@@ -47,11 +47,11 @@
     (testing "consecutive stages"
       (is (= {"https://ns.flur.ee/DbBlock#reindexMin" 1,
               "https://ns.flur.ee/DbBlock#address"
-              "fluree:db:memory:indexertest/db/1ed976882c0db213d475590378758a490f631d2ed1d223c8540b0540689aa3bf",
+              "fluree:db:memory:indexertest/db/6ec03a2f961fa205b3db5038f0c2c35bfb46d5e612d2a8577f61e37b067a3093"
               "https://ns.flur.ee/DbBlock#reindexMax" 1000000,
               "https://ns.flur.ee/DbBlock#size" 828,
               "https://ns.flur.ee/DbBlock#v" 0,
-              "https://ns.flur.ee/DbBlock#txId" "TX-ID1",
+              "https://ns.flur.ee/DbBlock#txAddress" "TX-ADDRESS1",
               "@type" "https://ns.flur.ee/DbBlockSummary/",
               "https://ns.flur.ee/DbBlock#t" 1}
              db1-summary))
@@ -59,11 +59,11 @@
 
       (is (= {"https://ns.flur.ee/DbBlock#reindexMin" 1,
               "https://ns.flur.ee/DbBlock#address"
-              "fluree:db:memory:indexertest/db/545b2c139d73fd08fc3b74a0a3cdf93ab796cd761c2e39c2a0cb40b01345780d",
+              "fluree:db:memory:indexertest/db/95ffbe42459b154ae649b129011d20cc009e072395c02d8fc04b6e50d10d7151"
               "https://ns.flur.ee/DbBlock#reindexMax" 1000000,
               "https://ns.flur.ee/DbBlock#size" 958,
               "https://ns.flur.ee/DbBlock#v" 0,
-              "https://ns.flur.ee/DbBlock#txId" "TX-ID2",
+              "https://ns.flur.ee/DbBlock#txAddress" "TX-ADDRESS2",
               "@type" "https://ns.flur.ee/DbBlockSummary/",
               "https://ns.flur.ee/DbBlock#t" 2}
              db2-summary))
@@ -94,16 +94,16 @@
                                        {:select {"?s" [:*]} :where [["?s" "@id" "http://dan.com/dan"]]})
 
             resolved-block (idxr/resolve idxr2 (get db2-summary iri/DbBlockAddress))]
-        (is (= ["indexertest/db/1ed976882c0db213d475590378758a490f631d2ed1d223c8540b0540689aa3bf"
-                "indexertest/db/545b2c139d73fd08fc3b74a0a3cdf93ab796cd761c2e39c2a0cb40b01345780d"
-                "indexertest/db/6c3954582f8699a0c7e7a424b32292b7de3799ef7db1a0bf0ba3e3829ff5543f"]
+        (is (= ["indexertest/db/6ec03a2f961fa205b3db5038f0c2c35bfb46d5e612d2a8577f61e37b067a3093"
+                "indexertest/db/8dfb55761d976c1e08af79cbf635d741b3bec94c8c95e4aa2cbf6ddccb051222"
+                "indexertest/db/95ffbe42459b154ae649b129011d20cc009e072395c02d8fc04b6e50d10d7151"]
                (sort (async/<!! (store/list store "indexertest/db")))))
 
         (is (= [true true true]
                (map (fn [block-path] (model/valid? idxr/DbBlock (async/<!! (store/read store block-path))))
-                    ["indexertest/db/1ed976882c0db213d475590378758a490f631d2ed1d223c8540b0540689aa3bf"
-                     "indexertest/db/545b2c139d73fd08fc3b74a0a3cdf93ab796cd761c2e39c2a0cb40b01345780d"
-                     "indexertest/db/6c3954582f8699a0c7e7a424b32292b7de3799ef7db1a0bf0ba3e3829ff5543f"])))
+                    ["indexertest/db/6ec03a2f961fa205b3db5038f0c2c35bfb46d5e612d2a8577f61e37b067a3093"
+                     "indexertest/db/8dfb55761d976c1e08af79cbf635d741b3bec94c8c95e4aa2cbf6ddccb051222"
+                     "indexertest/db/95ffbe42459b154ae649b129011d20cc009e072395c02d8fc04b6e50d10d7151"])))
         ;; index keys are nondeterministic, so can only assert count
         (is (= 26
                (count (async/<!! (store/list store "indexertest/index")))))
@@ -115,8 +115,9 @@
                loaded-results))
 
         (is (= {"https://ns.flur.ee/DbBlock#reindexMin" 1,
+                "https://ns.flur.ee/DbBlock#txAddress" "TX-ADDRESS2",
                 "https://ns.flur.ee/DbBlock#previous"
-                "indexertest/db/1ed976882c0db213d475590378758a490f631d2ed1d223c8540b0540689aa3bf",
+                "indexertest/db/6ec03a2f961fa205b3db5038f0c2c35bfb46d5e612d2a8577f61e37b067a3093",
                 "https://ns.flur.ee/DbBlock#reindexMax" 1000000,
                 "https://ns.flur.ee/DbBlock#size" 958,
                 "https://ns.flur.ee/DbBlock#v" 0,
@@ -124,7 +125,6 @@
                 "indexertest/index/__root_000000000000000",
                 "https://ns.flur.ee/DbBlock#assert"
                 [{"http://dan.com/prop2" "foo", "@id" "http://dan.com/dan"}],
-                "https://ns.flur.ee/DbBlock#txId" "TX-ID2",
                 "https://ns.flur.ee/DbBlock#retract" [],
                 "@type" "https://ns.flur.ee/DbBlock/",
                 "https://ns.flur.ee/DbBlock#t" 2}

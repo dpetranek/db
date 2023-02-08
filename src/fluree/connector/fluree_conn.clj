@@ -62,31 +62,28 @@
 
         ;; submit tx for indexing on top of latest db
         db-address (-> ledger (get iri/LedgerHead) (get iri/LedgerDbHead) (get iri/DbBlockAddress))
-        db-summary (idxr/stage idxr db-address tx {:tx-id (get tx-head iri/TxSummaryTxId)})
+        db-summary (idxr/stage idxr db-address tx {:tx-address (get tx-head iri/TxHeadAddress)})
 
         ;; update ledger head
-        new-ledger (pub/publish pub ledger-name {:db-summary db-summary :tx-summary tx-head})]
+        new-ledger (pub/publish pub ledger-name db-summary)]
     ;; broadcast to subscribers
     (fluree-broadcast conn ledger-name)
     ;; return new ledger
     new-ledger))
 
 (defn load-txs
-  "While commit-t is greater than indexed-t, walk back through ledger heads to find commit
-  addresses until we find the last indexed-t or the first commit. Then resolve all the
-  commits."
-  [{:keys [txr pub] :as _conn} ledger-name indexed-tx-id]
+  "Load all of the un-indexed transactions, starting with the head tx and going back until
+  the indexed-tx is found or the first tx is found."
+  [{:keys [txr pub] :as _conn} ledger-name indexed-tx-address]
   (let [tx-head (txr/head txr ledger-name)]
     (loop [{address  iri/TxHeadAddress
-            tx-id    iri/TxSummaryTxId
             previous iri/TxSummaryPrevious
-            :as      commit} (txr/resolve txr (get tx-head iri/TxHeadAddress))
+            :as      tx} (txr/resolve txr (get tx-head iri/TxHeadAddress))
 
            txs '()]
-      (if (not= indexed-tx-id tx-id)
+      (if (not= indexed-tx-address address)
         (if previous
-          (let [prev-commit (txr/resolve txr previous)]
-            (recur prev-commit (conj txs commit)))
+          (recur (txr/resolve txr previous) (conj txs tx))
           ;; reached first commit
           txs)
         txs))))
@@ -104,11 +101,11 @@
 
         {head iri/LedgerHead} (get ledger :cred/credential-subject ledger)
 
-        {indexed-tx-id iri/DbBlockTxId
+        {indexed-tx-address iri/DbBlockTxAddress
          db-address iri/DbBlockAddress} (-> head (get iri/LedgerEntryDb))
 
         ;; load the un-indexed txs
-        txs    (load-txs conn ledger-name indexed-tx-id)
+        txs    (load-txs conn ledger-name indexed-tx-address)
         ;; re-stage the unindexed txs in order
         db-summary (reduce (fn [{db-address iri/DbBlockAddress} {:keys [commit/tx]}]
                              (idxr/stage idxr db-address tx))

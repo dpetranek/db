@@ -53,12 +53,12 @@
          (sort ledger-head-paths))))
 
 (defn publish-ledger
-  [pub ledger-name {:keys [tx-summary db-summary]}]
+  [pub ledger-name db-summary]
   (let [store        (:store pub)
         prev-ledger  (resolve-ledger pub ledger-name)
         ;; unwrap ledger from credential if it's wrapped
         prev-ledger  (get prev-ledger :cred/credential-subject prev-ledger)
-        new-head     (ledger/create-ledger-entry prev-ledger tx-summary db-summary)
+        new-head     (ledger/create-ledger-entry prev-ledger db-summary)
         ledger       (assoc prev-ledger iri/LedgerHead new-head)
         final-ledger (if (:did pub)
                        ledger
@@ -77,7 +77,7 @@
   pub-proto/Publisher
   (init [pub ledger-name opts] (init-ledger pub ledger-name opts))
   (list [pub] (list-ledgers pub))
-  (publish [pub ledger-name info] (publish-ledger pub ledger-name info))
+  (publish [pub ledger-name db-summary] (publish-ledger pub ledger-name db-summary))
   (resolve [pub ledger-name] (resolve-ledger pub ledger-name)))
 
 (defn create-publisher

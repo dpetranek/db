@@ -52,8 +52,8 @@
                       "https://ns.flur.ee/DbBlock#assert"
                       [{"https://example.com/foo" "bar"
                         "@id"                     "https://example.com/dan"}]
-                      "https://ns.flur.ee/DbBlock#txId"
-                      "feae031efbec78a61d38c2d4bdd6f23ac4e287c95f9c142fc93e1e977675f212"
+                      "https://ns.flur.ee/DbBlock#txAddress"
+                      "fluree:tx-summary:memory:testconn/tx-summary/fef7fac7e4979ca2e917304de3480d384b07c96b1fad1ee91b5d41d3fa514df8"
                       "https://ns.flur.ee/DbBlock#retract"    []
                       "@type"                                 "https://ns.flur.ee/DbBlock/"
                       "https://ns.flur.ee/DbBlock#t"          1}
@@ -72,22 +72,15 @@
                     {"@type" "https://ns.flur.ee/LedgerEntry/"
                      "https://ns.flur.ee/LedgerEntry#created" "1970-01-01T00:00:00.00000Z"
 
-                     "https://ns.flur.ee/LedgerEntry#txHead"
-                     {"@type" "https://ns.flur.ee/TxHead/"
-                      "https://ns.flur.ee/TxSummary#txAddress" ""
-                      "https://ns.flur.ee/TxSummary#txId" "feae031efbec78a61d38c2d4bdd6f23ac4e287c95f9c142fc93e1e977675f212"
-                      "https://ns.flur.ee/TxSummary#size" 3
-                      "https://ns.flur.ee/TxSummary#v" 0
-                      "https://ns.flur.ee/TxSummary#previous" "fluree:tx-summary:memory:testconn/tx-summary/init"
-                      "https://ns.flur.ee/TxHead#address" "fluree:tx-summary:memory:testconn/tx-summary/fef7fac7e4979ca2e917304de3480d384b07c96b1fad1ee91b5d41d3fa514df8"}
-
                      "https://ns.flur.ee/LedgerEntry#dbHead"
                      {"https://ns.flur.ee/DbBlock#reindexMin" 100000
-                      "https://ns.flur.ee/DbBlock#address" "fluree:db:memory:testconn/db/263d0466196176ea76604db350408922df88698e42e3c79b283dce70d26114c7"
+                      "https://ns.flur.ee/DbBlock#address"
+                      "fluree:db:memory:testconn/db/99902bf349182f5fe92b3b020c6b62ea60f50b0af8d7fbd37fa845d936ce167c"
                       "https://ns.flur.ee/DbBlock#reindexMax" 1000000
                       "https://ns.flur.ee/DbBlock#size" 844
                       "https://ns.flur.ee/DbBlock#v" 0
-                      "https://ns.flur.ee/DbBlock#txId" "feae031efbec78a61d38c2d4bdd6f23ac4e287c95f9c142fc93e1e977675f212"
+                      "https://ns.flur.ee/DbBlock#txAddress"
+                      "fluree:tx-summary:memory:testconn/tx-summary/fef7fac7e4979ca2e917304de3480d384b07c96b1fad1ee91b5d41d3fa514df8"
                       "@type" "https://ns.flur.ee/DbBlockSummary/"
                       "https://ns.flur.ee/DbBlock#t" 1}}}
                    ledger)))
@@ -165,22 +158,15 @@
                     {"@type" "https://ns.flur.ee/LedgerEntry/",
                      "https://ns.flur.ee/LedgerEntry#created" "1970-01-01T00:00:00.00000Z",
 
-                     "https://ns.flur.ee/LedgerEntry#txHead"
-                     {"@type" "https://ns.flur.ee/TxHead/",
-                      "https://ns.flur.ee/TxSummary#txAddress" "",
-                      "https://ns.flur.ee/TxSummary#txId" "feae031efbec78a61d38c2d4bdd6f23ac4e287c95f9c142fc93e1e977675f212",
-                      "https://ns.flur.ee/TxSummary#size" 3,
-                      "https://ns.flur.ee/TxSummary#v" 0,
-                      "https://ns.flur.ee/TxSummary#previous" "fluree:tx-summary:memory:testconn/tx-summary/init",
-                      "https://ns.flur.ee/TxHead#address" "fluree:tx-summary:memory:testconn/tx-summary/fef7fac7e4979ca2e917304de3480d384b07c96b1fad1ee91b5d41d3fa514df8"},
-
                      "https://ns.flur.ee/LedgerEntry#dbHead"
                      {"https://ns.flur.ee/DbBlock#reindexMin" 100000,
-                      "https://ns.flur.ee/DbBlock#address" "fluree:db:memory:testconn/db/263d0466196176ea76604db350408922df88698e42e3c79b283dce70d26114c7",
+                      "https://ns.flur.ee/DbBlock#address"
+                      "fluree:db:memory:testconn/db/99902bf349182f5fe92b3b020c6b62ea60f50b0af8d7fbd37fa845d936ce167c"
                       "https://ns.flur.ee/DbBlock#reindexMax" 1000000,
                       "https://ns.flur.ee/DbBlock#size" 844,
                       "https://ns.flur.ee/DbBlock#v" 0,
-                      "https://ns.flur.ee/DbBlock#txId" "feae031efbec78a61d38c2d4bdd6f23ac4e287c95f9c142fc93e1e977675f212",
+                      "https://ns.flur.ee/DbBlock#txAddress"
+                      "fluree:tx-summary:memory:testconn/tx-summary/fef7fac7e4979ca2e917304de3480d384b07c96b1fad1ee91b5d41d3fa514df8"
                       "@type" "https://ns.flur.ee/DbBlockSummary/",
                       "https://ns.flur.ee/DbBlock#t" 1}}}
                    ledger)))
