@@ -1,10 +1,8 @@
 (ns fluree.db.query.fql.parse
-  (:require [fluree.db.query.exec :as exec]
+  (:require [fluree.db.query.exec.eval :as eval]
             [fluree.db.query.exec.where :as where]
             [fluree.db.query.exec.select :as select]
-            [fluree.db.query.parse.aggregate :refer [parse-aggregate]]
             [fluree.db.query.json-ld.select :refer [parse-subselection]]
-            [fluree.db.query.subject-crawl.legacy :refer [basic-to-analytical-transpiler]]
             [fluree.db.query.subject-crawl.reparse :refer [re-parse-as-simple-subj-crawl]]
             [fluree.db.query.fql.syntax :as syntax]
             [clojure.string :as str]
@@ -15,17 +13,15 @@
             [fluree.db.query.analytical-filter :as filter]
             [fluree.db.util.log :as log :include-macros true]
             [fluree.db.dbproto :as dbproto]
-            [fluree.db.constants :as const]))
+            [fluree.db.constants :as const]
+            #?(:cljs [cljs.reader :refer [read-string]])))
 
 #?(:clj (set! *warn-on-reflection* true))
 
-(defn basic-query?
-  [q]
-  (contains? q :from))
-
 (defn parse-context
-  [q db]
-  (let [ctx-key (if (-> q :opts :js?)
+  [{:keys [opts] :as q} db]
+  (let [ctx-key (if (= :string (or (:context-type opts)
+                                   (:contextType opts)))
                   :context-str
                   :context)
         db-ctx (get-in db [:schema ctx-key])
@@ -66,19 +62,17 @@
   [x]
   (map? x))
 
-(def read-str #?(:clj read-string :cljs cljs.reader/read-string))
-
 (defn safe-read
   [code-str]
   (try*
-    (let [code (read-str code-str)]
+    (let [code (read-string code-str)]
       (when-not (list? code)
         (throw (ex-info (code-str "Invalid function: " code-str)
                         {:status 400 :error :db/invalid-query})))
       code)
     (catch* e
-            (log/warn "Invalid query function attempted: " code-str " with error message: " (ex-message e))
-            (throw (ex-info (code-str "Invalid query function: " code-str)
+            (log/warn e "Invalid query function attempted: " code-str)
+            (throw (ex-info (str "Invalid query function: " code-str)
                             {:status 400 :error :db/invalid-query})))))
 
 (defn variables
@@ -116,18 +110,22 @@
                       {:status 400
                        :error  :db/invalid-query})))))
 
+(defn parse-code
+  [x]
+  (if (list? x)
+    x
+    (safe-read x)))
+
 (defn parse-filter-function
   "Evals, and returns query function."
-  [code-str vars]
-  (let [code      (safe-read code-str)
+  [fltr vars]
+  (let [code      (parse-code fltr)
         code-vars (or (not-empty (variables code))
-                      (throw (ex-info (str "Filter function must contain a valid variable. Provided: " code-str)
+                      (throw (ex-info (str "Filter function must contain a valid variable. Provided: " code)
                                       {:status 400 :error :db/invalid-query})))
         var-name  (find-filtered-var code-vars vars)
-        params    (vec code-vars)
-        [fun _]   (filter/extract-filter-fn code code-vars)
-        f         (filter/make-executable params fun)]
-    (where/->function var-name params f)))
+        f         (eval/compile-filter code var-name)]
+    (where/->function var-name f)))
 
 (def ^:const default-recursion-depth 100)
 
@@ -244,13 +242,13 @@
                     {:status 400 :error :db/invalid-query}))))
 
 (defn parse-object-pattern
-  [o-pat context]
+  [o-pat]
   (or (parse-variable o-pat)
       (parse-pred-ident o-pat)
       (where/->value o-pat)))
 
 (defmulti parse-pattern
-  (fn [pattern vars db context]
+  (fn [pattern _vars _db _context]
     (if (map? pattern)
       (->> pattern keys first)
       :triple)))
@@ -266,8 +264,8 @@
     (->> filters
          (mapcat vals)
          flatten
-         (map (fn [f-str]
-                (parse-filter-function f-str vars)))
+         (map (fn [fltr]
+                (parse-filter-function fltr vars)))
          (reduce (fn [m fltr]
                    (let [var-name (::where/var fltr)]
                      (update m var-name (fn [var-fltrs]
@@ -299,7 +297,7 @@
                     (json-ld/expand-iri context)
                     where/->value)]
           (where/->pattern :iri [s p o]))
-        (let [o (parse-object-pattern o-pat context)]
+        (let [o (parse-object-pattern o-pat)]
           [s p o])))))
 
 (defmethod parse-pattern :triple
@@ -330,8 +328,7 @@
   [db context depth s]
   (cond
     (syntax/variable? s) (-> s parse-var-name select/variable-selector)
-    (syntax/query-fn? s) (let [{:keys [variable function]} (parse-aggregate s)]
-                           (select/aggregate-selector variable function))
+    (syntax/query-fn? s) (-> s parse-code eval/compile select/aggregate-selector)
     (select-map? s)      (let [{:keys [variable selection depth spec]}
                                (parse-subselection db context s depth)]
                            (select/subgraph-selector variable selection depth spec))))
@@ -386,9 +383,14 @@
                          [v :asc]
                          [v :desc])))))))
 
-(defn parse-analytical-query
+(defn parse-having
+  [q]
+  (if-let [code (some-> q :having parse-code)]
+    (assoc q :having (eval/compile code))
+    q))
+
+(defn parse-analytical-query*
   [q db]
-  (syntax/validate q)
   (let [context  (parse-context q db)
         vars     (parse-vars q)
         where    (parse-where q vars db context)
@@ -400,20 +402,19 @@
                :where   where)
         (cond-> grouping (assoc :group-by grouping)
                 ordering (assoc :order-by ordering))
+        parse-having
         (parse-select db context))))
 
-(defn parse-basic-query
+(defn parse-analytical-query
   [q db]
-  (let [q (basic-to-analytical-transpiler db q)]
-    (parse-analytical-query q db)))
+  (let [parsed (parse-analytical-query* q db)]
+    (or (re-parse-as-simple-subj-crawl parsed)
+        parsed)))
 
 (defn parse
   [q db]
-  (if (basic-query? q)
-    (parse-basic-query q db)
-    (let [parsed (parse-analytical-query q db)]
-      (or (re-parse-as-simple-subj-crawl parsed)
-          parsed))))
+  (syntax/validate q)
+  (parse-analytical-query q db))
 
 (defn parse-delete
   [q db]

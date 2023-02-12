@@ -1,11 +1,10 @@
 (ns user
-  (:require [clojure.tools.namespace.repl :as tn :refer [refresh refresh-all]]
+  (:require [fluree.db.json-ld.api :as fluree]
+            [clojure.tools.namespace.repl :as tn :refer [refresh refresh-all]]
             [clojure.core.async :as async]
             [fluree.db.util.async :refer [<? <?? go-try merge-into?]]
             [fluree.db.flake :as flake]
-            [fluree.db.permissions :as permissions]
             [fluree.db.dbfunctions.fns :as dbfunctions]
-            [fluree.db.session :as session]
             [fluree.db.constants :as constants]
             [fluree.db.util.json :as json]
             [fluree.db.serde.json :as serdejson]

@@ -7,63 +7,25 @@
             [fluree.db.query.fql :as fql]
             [fluree.db.query.fql.parse :as fql-parse]
             [fluree.db.query.range :as query-range]
-            [fluree.db.session :as session]
             [fluree.db.dbproto :as dbproto]
-            [fluree.db.permissions :as permissions]
-            [fluree.db.auth :as auth]
             [fluree.db.flake :as flake]
             [fluree.db.util.core :as util #?(:clj :refer :cljs :refer-macros) [try* catch*]]
-            [fluree.db.util.async :refer [<? go-try]]
-            [fluree.db.query.fql.resp :refer [flakes->res]]
-            [fluree.db.util.async :as async-util]
+            [fluree.db.util.async :as async-util :refer [<? go-try]]
             [fluree.db.json-ld.credential :as cred]
             [fluree.db.query.json-ld.response :as json-ld-resp]
             [fluree.json-ld :as json-ld]
             [fluree.db.db.json-ld :as jld-db]
             [malli.core :as m]
-            [fluree.db.util.log :as log]))
+            [fluree.db.util.log :as log]
+            [fluree.db.constants :as const]
+            [fluree.db.datatype :as datatype]))
 
 #?(:clj (set! *warn-on-reflection* true))
 
 ;; main query interface for APIs, etc.
 
 
-(declare query query-async)
-
-
-(defn query-type
-  "Returns keyword of query type by inspecting flureeQL query.
-
-  Query types are:
-    :standard - basic or analytical query
-    :multi - multi-query
-    :block - block query
-    :history - history query"
-  [flureeQL]
-  (cond
-    (:select flureeQL)
-    :standard
-
-    (:selectOne flureeQL)
-    :standard
-
-    (:history flureeQL)
-    :history
-
-    (:selectDistinct flureeQL)
-    :standard
-
-    (:selectReduced flureeQL)                               ;; SPARQL standard, no special treatment over :selectDistinct
-    :standard
-
-    (:block flureeQL)                                       ;; block checked last, as block is allowed in above query types
-    :block
-
-    ;; (:construct flureeQL) - we don't yet have support for SPARQL-like construct queries
-    ;; :construct
-
-    :else
-    :multi))
+(declare query)
 
 
 (defn db-ident?
@@ -75,121 +37,67 @@
   [ledger-id]
   (re-find #"[a-z0-9]+/[a-z0-9]+" ledger-id))
 
-;; TODO - not using new policy below, needs to have updated logic to lookup user roles!
-(defn db
-  "Returns a queryable database as a promise channel from the connection for the specified ledger."
-  ([conn ledger]
-   (session/db conn ledger nil))
-  ([conn ledger opts]
-   (let [pc (async/promise-chan)]
-     (async/go
-       (try*
-         (let [rootdb        (<? (session/db conn ledger nil))
-               {:keys [roles user auth block]} opts
-               auth_id       (when (and auth (not= 0 auth))
-                               (or
-                                 (<? (dbproto/-subid rootdb auth))
-                                 (throw (ex-info (str "Auth id: " auth " unknown.")
-                                                 {:status 401
-                                                  :error  :db/invalid-auth}))))
-               roles         (or roles (if auth_id
-                                         (<? (auth/roles rootdb auth_id)) nil))
-
-               permissions-c (when roles (permissions/permission-map rootdb roles :query))
-               dbt           (if block
-                               (<? (time-travel/as-of-block rootdb (:block opts)))
-                               rootdb)
-               dba           (if auth
-                               (assoc dbt :auth auth)
-                               dbt)
-               permdb        (if roles
-                               (assoc dba :permissions (<? permissions-c))
-                               dba)]
-           (async/put! pc permdb))
-         (catch* e
-                 (async/put! pc e)
-                 (async/close! pc))))
-     ;; return promise chan immediately
-     pc)))
 
 
-(defn- get-sources
-  [conn network auth prefixes]
-  (reduce-kv (fn [acc key val]
-               (when-not (re-matches #"[a-z]+" (util/keyword->str key))
-                 (throw (ex-info (str "Source name must be only lowercase letters. Provided: " (util/keyword->str key))
-                                 {:status 400
-                                  :error  :db/invalid-query})))
-               (let [db-ident? (db-ident? val)]
-                 (if db-ident?
-                   (let [ledger (isolate-ledger-id val)
-                         opts   (if auth {:auth auth} {})
-                         db     (db conn ledger opts)]
-                     (assoc acc val db))
-                   acc))) {} prefixes))
-
-
-(defn resolve-block-range
-  [db query-map]
-  (go-try
-    (let [range     (if (sequential? (:block query-map))
-                      (:block query-map)
-                      [(:block query-map) (:block query-map)])
-          [block-start block-end]
-          (if (some string? range)                          ;; do we need to convert any times to block integers?
-            [(<? (time-travel/block-to-int-format db (first range)))
-             (when-let [end (second range)]
-               (<? (time-travel/block-to-int-format db end)))] range)
-          db-block  (:block db)
-          _         (when (> block-start db-block)
-                      (throw (ex-info (str "Start block is out of range for this ledger. Start block provided: " (pr-str block-start) ". Database block: " (pr-str db-block)) {:status 400 :error :db/invalid-query})))
-          [block-start block-end]
-          (cond
-            (and block-start block-end) [block-start block-end]
-            block-start [block-start (:block db)]
-            :else (throw (ex-info (str "Invalid block range provided: " (pr-str range)) {:status 400 :error :db/invalid-query})))
-          _         (when (not (and (pos-int? block-start) (pos-int? block-end)))
-                      (throw (ex-info (str "Invalid block range provided: " (pr-str range)) {:status 400 :error :db/invalid-query})))
-          [block-start block-end]
-          (if (< block-end block-start)
-            [block-end block-start]                         ;; make sure smallest number comes first
-            [block-start block-end])
-          block-end (if (> block-end db-block)
-                      db-block block-end)]
-      [block-start block-end])))
-
-(defn t-flakes->json-ld
-  [db compact cache fuel error-ch t-flakes]
+(defn s-flakes->json-ld
+  [db cache compact fuel error-ch s-flakes]
   (async/go
     (try*
-      (let [assert-flakes  (not-empty (filter flake/op t-flakes))
-            retract-flakes (not-empty (filter (complement flake/op) t-flakes))
-
-            asserts-chan   (json-ld-resp/flakes->res db cache compact fuel 1000000
-                                                     {:wildcard? true, :depth 0}
-                                                     0 assert-flakes)
-            retracts-chan  (json-ld-resp/flakes->res db cache compact fuel 1000000
-                                                     {:wildcard? true, :depth 0}
-                                                     0 retract-flakes)
-
-            asserts (<? asserts-chan)
-            retracts (<? retracts-chan)
-
-            ;; t is always positive for users
-            result         (cond-> {:t (- (flake/t (first t-flakes)))}
-                             asserts (assoc :assert asserts)
-                             retracts (assoc :retract retracts))]
-        result)
+      (let [json-chan (json-ld-resp/flakes->res db cache compact fuel 1000000
+                                                {:wildcard? true, :depth 0}
+                                                0 s-flakes)]
+        (-> (<? json-chan)
+            ;; add the id in case the iri flake isn't present in s-flakes
+            (assoc :id (json-ld/compact (<? (dbproto/-iri db (flake/s (first s-flakes)))) compact))))
       (catch* e
               (log/error e "Error converting history flakes.")
               (async/>! error-ch e)))))
+
+(defn t-flakes->json-ld
+  [db compact cache fuel error-ch t-flakes]
+  (go-try
+    (let [{assert-flakes  true
+           retract-flakes false} (group-by flake/op t-flakes)
+
+          s-flake-partitions (fn [flakes]
+                               (->> flakes
+                                    (group-by flake/s)
+                                    (vals)
+                                    (async/to-chan!)))
+
+          s-asserts-ch  (s-flake-partitions assert-flakes)
+          s-retracts-ch (s-flake-partitions retract-flakes)
+
+          s-asserts-out-ch  (async/chan)
+          s-retracts-out-ch (async/chan)
+
+          s-asserts-json-ch  (async/into [] s-asserts-out-ch)
+          s-retracts-json-ch (async/into [] s-retracts-out-ch)]
+      ;; process asserts
+      (async/pipeline-async 2
+                            s-asserts-out-ch
+                            (fn [assert-flakes ch]
+                              (-> (s-flakes->json-ld db cache compact fuel error-ch assert-flakes)
+                                  (async/pipe ch)))
+                            s-asserts-ch)
+      ;; process retracts
+      (async/pipeline-async 2
+                            s-retracts-out-ch
+                            (fn [retract-flakes ch]
+                              (-> (s-flakes->json-ld db cache compact fuel error-ch retract-flakes)
+                                  (async/pipe ch)))
+                            s-retracts-ch)
+      {(json-ld/compact const/iri-t compact) (- (flake/t (first t-flakes)))
+       (json-ld/compact const/iri-assert compact) (async/<! s-asserts-json-ch)
+       (json-ld/compact const/iri-retract compact) (async/<! s-retracts-json-ch)})))
 
 (defn history-flakes->json-ld
   [db q flakes]
   (go-try
     (let [fuel    (volatile! 0)
           cache   (volatile! {})
-          compact (json-ld/compact-fn (fql-parse/parse-context q db))
+          context (fql-parse/parse-context q db)
+          compact (json-ld/compact-fn context)
 
           error-ch   (async/chan)
           out-ch     (async/chan)
@@ -244,12 +152,16 @@
    [:t {:optional true}
     [:and
      [:map
-      [:from {:optional true} pos-int?]
-      [:to {:optional true} pos-int?]]
+      [:from {:optional true} [:or
+                               pos-int?
+                               datatype/iso8601-datetime-re]]
+      [:to {:optional true} [:or
+                             pos-int?
+                             datatype/iso8601-datetime-re]]]
      [:fn {:error/message "Either \"from\" or \"to\" `t` keys must be provided."}
       (fn [{:keys [from to]}] (or from to))]
      [:fn {:error/message "\"from\" value must be less than or equal to \"to\" value."}
-      (fn [{:keys [from to]}] (if (and from to)
+      (fn [{:keys [from to]}] (if (and from to (number? from) (number? to))
                                 (<= from to)
                                 true))]]]])
 
@@ -294,142 +206,110 @@
             [pattern idx] (get-history-pattern query)
 
             ;; from and to are positive ints, need to convert to negative or fill in default values
-            {:keys [from to]}  t
-            [from-t to-t]      [(if from (- from) -1) (if to (- to) (:t db))]
-
-            flakes  (<? (query-range/time-range db idx = pattern {:from-t from-t :to-t to-t}))
-            results (<? (history-flakes->json-ld db query-map flakes))]
+            {:keys [from to]} t
+            [from-t to-t]     [(cond (string? from) (<? (time-travel/datetime->t db from))
+                                     (number? from) (- from)
+                                     :else          -1)
+                               (cond (string? to) (<? (time-travel/datetime->t db to))
+                                     (number? to) (- to)
+                                     :else        (:t db))]
+            flakes            (<? (query-range/time-range db idx = pattern {:from-t from-t :to-t to-t}))
+            results           (<? (history-flakes->json-ld db query-map flakes))]
         results))))
 
-(defn query-async
+(defn query
   "Execute a query against a database source, or optionally
   additional sources if the query spans multiple data sets.
   Returns core async channel containing result."
   [sources query]
   (go-try
-    (let [{query :subject issuer :issuer} (or (<? (cred/verify query))
-                                              {:subject query})
-          {:keys [select selectOne selectDistinct selectReduced construct
-                  from where prefixes opts t]} query
-          db            (if (async-util/channel? sources) ;; only support 1 source currently
-                          (<? sources)
-                          sources)
-          db*           (-> (if t
-                              (<? (time-travel/as-of db t))
-                              db)
-                            (assoc-in [:policy :cache] (atom {})))
-          source-opts   (if prefixes
-                          (get-sources (:conn db*) (:network db*) (:auth-id db*) prefixes)
-                          {})
+   (let [{query :subject, issuer :issuer}
+         (or (<? (cred/verify query))
+             {:subject query})
+
+         {:keys [opts t]} query
+         db               (if (async-util/channel? sources) ;; only support 1 source currently
+                            (<? sources)
+                            sources)
+         db*              (-> (if t
+                                (<? (time-travel/as-of db t))
+                                db)
+                              (assoc-in [:policy :cache] (atom {})))
           meta?         (:meta opts)
-          fuel          (when (or (:fuel opts) meta?) (volatile! 0)) ;; only measure fuel if fuel budget provided, or :meta true
-          opts*         (assoc opts :sources source-opts
-                               :max-fuel (or (:fuel opts) 1000000)
-                               :fuel fuel
-                               :issuer issuer)
-          _             (when-not (and (or select selectOne selectDistinct selectReduced construct)
-                                       (or from where))
-                          (throw (ex-info (str "Invalid query.")
-                                          {:status 400
-                                           :error  :db/invalid-query})))
-          start #?(:clj (System/nanoTime) :cljs (util/current-time-millis))
-          result        (<? (fql/query db* (assoc query :opts opts*)))]
+          opts*         (assoc opts :issuer issuer)
+          start         #?(:clj (System/nanoTime)
+                           :cljs (util/current-time-millis))
+         result        (<? (fql/query db* (assoc query :opts opts*)))]
       (if meta?
         {:status 200
          :result result
-         :fuel   @fuel
-         :time   (util/response-time-formatted start)
-         :block  (:block db*)}
+         :time   (util/response-time-formatted start)}
         result))))
 
-
-(defn multi-query-async
+(defn multi-query
   "Performs multiple queries in a map, with the key being the alias for the query
-  and the value being the query itself - standard, history, and block queries are all supported.
-  Each query result will be in a response map with its respective alias as the key.
+  and the value being the query itself. Each query result will be in a response
+  map with its respective alias as the key.
 
-  If a :block is specified at the top level, it will be used as a default for all queries
-
-  If any errors occur, an :errors key will be present with a map of each alias to its error
-  information. Check for the presence of this key if detection of an error is important.
+  If any errors occur, an :errors key will be present with a map of each alias
+  to its error information. Check for the presence of this key if detection of
+  an error is important.
 
   An optional :opts key contains options, which for now is limited to:
    - meta: true or false - If false, will just report out the result as a map.
-           If true will roll up all status and fuel consumption. Response map will contain keys:
+           If true will roll up all status. Response map will contain keys:
            - status - aggregate status (200 all good, 207 some good, or 400+ for differing errors
-           - fuel   - aggregate fuel for all queries
            - result - query result
            - errors - map of query alias to their respective error"
   [source flureeQL]
-  (async/go
-    (try*
-      (let [global-block       (:block flureeQL)            ;; use as default for queries
-            global-meta?       (get-in flureeQL [:opts :meta]) ;; if true, need to collect meta for each query to total up
-            ;; update individual queries for :meta and :block if not otherwise specified
-            queries            (reduce-kv
-                                 (fn [acc alias query]
-                                   ;; block globally to all sub-queries unless already specified
-                                   (let [query-meta?  (get-in query [:opts :meta])
-                                         meta?        (or global-meta? query-meta?)
-                                         remove-meta? (and meta? (not query-meta?)) ;; query didn't ask for meta, but multiquery did so must strip it
+  (go-try
+   (let [global-meta?       (get-in flureeQL [:opts :meta]) ;; if true, need to collect meta for each query to total up
+         ;; update individual queries for :meta if not otherwise specified
+         queries            (reduce-kv
+                             (fn [acc alias query]
+                               (let [query-meta?  (get-in query [:opts :meta])
+                                     meta?        (or global-meta? query-meta?)
+                                     remove-meta? (and meta? (not query-meta?)) ;; query didn't ask for meta, but multiquery did so must strip it
 
-                                         opts*        (assoc (:opts query) :meta meta?
-                                                                           :_remove-meta? remove-meta?)
-                                         query*       (assoc query :opts opts*
-                                                                   :block (or (:block query) global-block))]
-                                     (assoc acc alias query*)))
-                                 {} (dissoc flureeQL :opts :block))
-            start-time #?(:clj (System/nanoTime) :cljs (util/current-time-millis))
-            ;; kick off all queries in parallel, each alias now mapped to core async channel
-            pending-resp       (map (fn [[alias q]] [alias (query source q)]) queries)]
-        (loop [[[alias port] & r] pending-resp
-               status-global nil                            ;; overall status.
-               fuel-global   0
-               response      {}]
-          (if (nil? port)                                   ;; done?
-            (if global-meta?
-              {:result response
-               :fuel   fuel-global
-               :status status-global
-               :time   (util/response-time-formatted start-time)}
-              response)
-            (let [{:keys [meta _remove-meta?]} (get-in queries [alias :opts])
-                  res            (async/<! port)
-                  error?         (:error res)               ;; if error key is present in response, it is an error
-                  status-global* (when meta
-                                   (let [status (:status res)]
-                                     (cond
-                                       (nil? status-global)
-                                       status
+                                     opts*        (assoc (:opts query) :meta meta?
+                                                         :-remove-meta? remove-meta?)
+                                     query*       (assoc query :opts opts*)]
+                                 (assoc acc alias query*)))
+                             {} (dissoc flureeQL :opts))
+         start-time #?(:clj (System/nanoTime) :cljs (util/current-time-millis))
+         ;; kick off all queries in parallel, each alias now mapped to core async channel
+         pending-resp       (map (fn [[alias q]] [alias (query source q)]) queries)]
+     (loop [[[alias port] & r] pending-resp
+            status-global nil                            ;; overall status.
+            response      {}]
+       (if (nil? port)                                   ;; done?
+         (if global-meta?
+           {:result response
+            :status status-global
+            :time   (util/response-time-formatted start-time)}
+           response)
+         (let [{:keys [meta -remove-meta?]} (get-in queries [alias :opts])
+               res            (async/<! port)
+               error?         (:error res)               ;; if error key is present in response, it is an error
+               status-global* (when meta
+                                (let [status (:status res)]
+                                  (cond
+                                    (nil? status-global)
+                                    status
 
-                                       (= status-global status)
-                                       status
+                                    (= status-global status)
+                                    status
 
-                                       ;; any 200 response with any other is a 207
-                                       (or (= 200 status) (= 200 status-global) (= 207 status-global))
-                                       207
+                                    ;; any 200 response with any other is a 207
+                                    (or (= 200 status) (= 200 status-global) (= 207 status-global))
+                                    207
 
-                                       ;; else take the max status
-                                       :else
-                                       (max status status-global))))
-                  fuel*          (when meta (+ fuel-global (get res :fuel 0)))
-                  response*      (if error?
-                                   (assoc-in response [:errors alias] res)
-                                   (assoc response alias (if _remove-meta?
-                                                           (:result res)
-                                                           res)))]
-              (recur r status-global* fuel* response*)))))
-      (catch* e e))))
-
-(defn query
-  "Generic query interface. Will determine if multi-query, standard query, block or history
-  and dispatch appropriately.
-
-  For now, sources is expected to be just a db. In the case of a block query, which requires
-  a conn + ledger, those will be extracted from the db."
-  [source flureeQL]
-  (let [query-type (query-type flureeQL)]
-    (case query-type
-      :standard (query-async source flureeQL)
-      :history (history source flureeQL)
-      :multi (multi-query-async source flureeQL))))
+                                    ;; else take the max status
+                                    :else
+                                    (max status status-global))))
+               response*      (if error?
+                                (assoc-in response [:errors alias] res)
+                                (assoc response alias (if -remove-meta?
+                                                        (:result res)
+                                                        res)))]
+           (recur r status-global* response*)))))))
