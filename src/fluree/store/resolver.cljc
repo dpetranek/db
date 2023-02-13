@@ -6,7 +6,8 @@
             [fluree.db.flake :as flake]
             [fluree.db.util.log :as log]
             [fluree.db.serde.protocol :as serdeproto]
-            [fluree.store.protocols :as store-proto]))
+            [fluree.store.protocols :as store-proto]
+            [fluree.db.conn.cache :as conn-cache]))
 
 (defn read-branch
   [{:keys [serializer] :as conn} key]
@@ -75,47 +76,13 @@
     (async/put! ch empty-node)
     ch))
 
-(defn lookup-cache
-  [cache-atom k value-fn]
-  (if (nil? value-fn)
-    (swap! cache-atom cache/evict k)
-    (when-let [v (get @cache-atom k)]
-      (swap! cache-atom cache/hit k)
-      v)))
-
-(defn default-object-cache-factory
-  "Generates a default object cache."
-  [cache-size]
-  (cache/lru-cache-factory {} :threshold cache-size))
-
-(defn default-async-cache-fn
-  "Default asynchronous object cache to use for ledger."
-  [cache-atom]
-  (fn [k value-fn]
-    (let [out (async/chan)]
-      (if-let [v (lookup-cache cache-atom k value-fn)]
-        (async/put! out v)
-        (async/go
-          (let [v (async/<! (value-fn k))]
-            (when-not (util/exception? v)
-              (swap! cache-atom cache/miss k v))
-            (async/put! out v))))
-      out)))
-
-(defn create-async-cache
-  [{:keys [cache-size-bytes] :as _config}]
-  (let [memory  (or cache-size-bytes 1000000) ;; default 1MB memory
-        memory-object-size (quot memory 100000)
-        default-cache-atom (atom (default-object-cache-factory memory-object-size))]
-    (default-async-cache-fn default-cache-atom)))
-
 (defn resolve-node
-  [store async-cache {:keys [id tempid] :as node}]
-  (if (= :empty id)
-    (resolve-empty-leaf node)
-    (async-cache
-      [::resolve id tempid]
-      (fn [_]
-        (resolve-index-node store node
-                            (fn []
-                              (async-cache [::resolve id tempid] nil)))))))
+  [store lru-cache-atom {:keys [id tempid] :as node}]
+  (let [cache-key [::resolve id tempid]]
+    (if (= :empty id)
+      (resolve-empty-leaf node)
+      (conn-cache/lru-lookup
+        lru-cache-atom
+        cache-key
+        (fn [_]
+          (resolve-index-node store node (fn [] (conn-cache/lru-evict lru-cache-atom cache-key))))))))

@@ -13,7 +13,8 @@
    [fluree.store.protocols :as store-proto]
    [fluree.store.resolver :as resolver]
    [fluree.db.serde.avro :as avro-serde]
-   [fluree.crypto :as crypto])
+   [fluree.crypto :as crypto]
+   [fluree.db.conn.cache :as conn-cache])
   (:import
    (java.io File OutputStream ByteArrayOutputStream FileNotFoundException)))
 
@@ -96,7 +97,7 @@
     (catch Exception e
       (log/error (str "Failed to list files at path: " prefix-path " with error: " (.getMessage e) ".")))))
 
-(defrecord FileStore [id serialize-to storage-path async-cache]
+(defrecord FileStore [id serialize-to storage-path lru-cache-atom]
   service-proto/Service
   (id [_] id)
   (stop [store] (stop-file-store store))
@@ -111,14 +112,18 @@
   (delete [_ path] (go-try (delete-file storage-path path)))
 
   fluree.db.index/Resolver
-  (resolve [store node] (resolver/resolve-node store async-cache node)))
+  (resolve [store node] (resolver/resolve-node store lru-cache-atom node)))
 
 (defn create-file-store
-  [{:keys [:store/id :store/serde :file-store/storage-path :file-store/serialize-to] :as config}]
-  (let [id (or id (random-uuid))]
+  [{:keys [:store/id :store/serde :store/memory store/lru-cache-atom
+           :file-store/storage-path :file-store/serialize-to ] :as config}]
+  (let [id (or id (random-uuid))
+
+        cache-size     (conn-cache/memory->cache-size memory)
+        lru-cache-atom (or lru-cache-atom (atom (conn-cache/create-lru-cache cache-size)))]
     (log/info "Started FileStore." id)
     (map->FileStore {:id id
                      :serialize-to serialize-to
-                     :async-cache (resolver/create-async-cache config)
+                     :lru-cache-atom lru-cache-atom
                      :serializer (or serde (avro-serde/->Serializer))
                      :storage-path (util/ensure-trailing-slash storage-path)})))

@@ -8,13 +8,6 @@
             [fluree.crypto :as crypto]
             [fluree.json-ld :as json-ld]))
 
-(defn root-index-path
-  "Returns the address of the index root, if it exists."
-  [db]
-  (let [addr (-> db :commit :index :address)
-        [_ _ _ path] (str/split addr #": ")]
-    path))
-
 (defn create-db-address
   "Creates an address of the form `fluree:db:<store-type>:<ledger-name>/db/<db-block-id>`."
   [db db-block-id]

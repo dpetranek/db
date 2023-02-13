@@ -3,7 +3,9 @@
 (def BaseStoreConfig
   [:map
    [:store/method [:enum :file :memory #_:local-storage #_:s3 #_:ipfs #_:dynamodb]]
-   [:store/serde {:optional true} :any]])
+   [:store/serde {:optional true} :any]
+   [:store/lru-cache-atom {:optional true} :any]
+   [:store/memory {:optional true} :int]])
 
 (def FileStoreConfig
   [:and

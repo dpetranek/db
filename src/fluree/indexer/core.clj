@@ -180,7 +180,7 @@
 (defn query-db
   [{:keys [store state] :as idxr} db-address query]
   (if-let [db (get @state db-address)]
-    (<?? (jld-query/query-async db query))
+    (<?? (jld-query/query db query))
     (throw (ex-info "No such db-address." {:error :query/no-such-db
                                            :db-address db-address}))))
 

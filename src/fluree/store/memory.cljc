@@ -11,7 +11,8 @@
    [fluree.db.util.log :as log]
    [fluree.store.protocols :as store-proto]
    [fluree.store.resolver :as resolver]
-   [fluree.crypto :as crypto]))
+   [fluree.crypto :as crypto]
+   [fluree.db.conn.cache :as conn-cache]))
 
 (defn stop-memory-store [store]
   (log/info (str "Stopping MemoryStore " (service-proto/id store) "."))
@@ -44,7 +45,7 @@
       (deserializer data)
       data)))
 
-(defrecord MemoryStore [id storage-atom async-cache]
+(defrecord MemoryStore [id storage-atom lru-cache-atom]
   service-proto/Service
   (id [_] id)
   (stop [store] (stop-memory-store store))
@@ -60,14 +61,17 @@
 
   fluree.db.index/Resolver
   (resolve [store node]
-    (resolver/resolve-node store async-cache node)))
+    (resolver/resolve-node store lru-cache-atom node)))
 
 (defn create-memory-store
-  [{:keys [store/id memory-store/storage-atom] :as config}]
+  [{:keys [store/id memory-store/storage-atom store/memory store/lru-cache-atom] :as config}]
   (let [id (or id (random-uuid))
-        storage-atom (or storage-atom (atom {}))]
-    (log/info "Started MemoryStore." id )
+        storage-atom (or storage-atom (atom {}))
+
+        cache-size     (conn-cache/memory->cache-size memory)
+        lru-cache-atom (or lru-cache-atom (atom (conn-cache/create-lru-cache cache-size)))]
+    (log/info "Started MemoryStore." id)
     (map->MemoryStore {:id id
                        :storage-atom storage-atom
-                       :async-cache (resolver/create-async-cache config)
+                       :lru-cache-atom lru-cache-atom
                        :serializer (none-serde/->Serializer)})))
